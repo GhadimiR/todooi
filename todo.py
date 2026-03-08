@@ -73,7 +73,7 @@ class TodoApp:
     def __init__(self):
         self.storage = TodoStorage()
         self.lists: list[dict] = []
-        self.items: list[dict] = []
+        self.items_cache: dict[str, list[dict]] = {}  # list_id -> items
         self.current_list_idx = 0
         self.cursor = 0
         self.message = ""
@@ -81,23 +81,29 @@ class TodoApp:
         self.notes_buffer: list[str] = []
         self.notes_cursor_line = 0
         self.notes_cursor_col = 0
-        self.load_lists()
+        self.load_all()
 
-    def load_lists(self):
+    def load_all(self):
+        """Load all lists and all items up front."""
         self.lists = self.storage.get_lists()
+        self.items_cache = {}
+        for lst in self.lists:
+            self.items_cache[lst["id"]] = self.storage.get_items(lst["id"])
         if self.lists:
             self.current_list_idx = min(self.current_list_idx, len(self.lists) - 1)
-            self.load_items()
-        else:
-            self.items = []
+        self.sync_items_view()
 
-    def load_items(self):
+    def sync_items_view(self):
+        """Update cursor bounds for current list (no fetch)."""
+        items = self.current_items
+        self.cursor = min(self.cursor, max(0, len(items) - 1)) if items else 0
+
+    @property
+    def current_items(self) -> list[dict]:
+        """Get items for current list from cache."""
         if self.lists:
-            self.items = self.storage.get_items(self.lists[self.current_list_idx]["id"])
-            self.cursor = min(self.cursor, max(0, len(self.items) - 1))
-        else:
-            self.items = []
-            self.cursor = 0
+            return self.items_cache.get(self.lists[self.current_list_idx]["id"], [])
+        return []
 
     @property
     def current_list(self) -> dict | None:
@@ -128,8 +134,9 @@ class TodoApp:
         lines.append("")
         
         # Items
-        if self.current_list and self.items:
-            for i, item in enumerate(self.items):
+        items = self.current_items
+        if self.current_list and items:
+            for i, item in enumerate(items):
                 marker = "›" if i == self.cursor else " "
                 if item["done"]:
                     check = f"{GREEN}✓{RESET}"
@@ -157,7 +164,7 @@ class TodoApp:
         sys.stdout.flush()
 
     def render_notes(self):
-        item = self.items[self.cursor]
+        item = self.current_items[self.cursor]
         lines = [CLEAR]
         
         # Header
@@ -208,24 +215,24 @@ class TodoApp:
         elif key in ('left', 'h') and self.lists:
             self.current_list_idx = (self.current_list_idx - 1) % len(self.lists)
             self.cursor = 0
-            self.load_items()
+            self.sync_items_view()
         elif key in ('right', 'l') and self.lists:
             self.current_list_idx = (self.current_list_idx + 1) % len(self.lists)
             self.cursor = 0
-            self.load_items()
-        elif key in ('up', 'k') and self.items:
+            self.sync_items_view()
+        elif key in ('up', 'k') and self.current_items:
             self.cursor = max(0, self.cursor - 1)
-        elif key in ('down', 'j') and self.items:
-            self.cursor = min(len(self.items) - 1, self.cursor + 1)
-        elif key == ' ' and self.items:
+        elif key in ('down', 'j') and self.current_items:
+            self.cursor = min(len(self.current_items) - 1, self.cursor + 1)
+        elif key == ' ' and self.current_items:
             self.toggle_item()
         elif key == 'a' and self.current_list:
             self.add_item()
-        elif key == 'e' and self.items:
+        elif key == 'e' and self.current_items:
             self.edit_item()
-        elif key == 'd' and self.items:
+        elif key == 'd' and self.current_items:
             self.delete_item()
-        elif key == 'n' and self.items:
+        elif key == 'n' and self.current_items:
             self.enter_notes()
         elif key == 'N':
             self.new_list()
@@ -234,7 +241,7 @@ class TodoApp:
         elif key == 'D' and self.current_list:
             self.delete_list()
         elif key == 'r':
-            self.load_lists()
+            self.load_all()
             self.message = "Refreshed"
         elif key == 'x' and self.current_list:
             self.clear_done()
@@ -243,7 +250,6 @@ class TodoApp:
         if key == '\x1b':  # Escape
             self.save_notes()
             self.mode = "list"
-            self.load_items()
         elif key == '\r' or key == '\n':  # Enter
             # Split line at cursor and insert new line
             if self.notes_buffer:
@@ -292,7 +298,7 @@ class TodoApp:
             self.notes_cursor_col += 1
 
     def enter_notes(self):
-        item = self.items[self.cursor]
+        item = self.current_items[self.cursor]
         notes = item.get("notes", "")
         self.notes_buffer = notes.split("\n") if notes else [""]
         self.notes_cursor_line = 0
@@ -300,38 +306,47 @@ class TodoApp:
         self.mode = "notes"
 
     def save_notes(self):
-        item = self.items[self.cursor]
+        item = self.current_items[self.cursor]
         notes = "\n".join(self.notes_buffer).rstrip()
         self.storage.update_item(self.current_list["id"], item["id"], notes=notes)
+        item["notes"] = notes  # Update cache
         self.message = "Notes saved"
 
     def toggle_item(self):
-        item = self.items[self.cursor]
+        item = self.current_items[self.cursor]
         self.storage.toggle_item(self.current_list["id"], item["id"])
-        self.load_items()
+        item["done"] = not item["done"]  # Update cache
+        self._resort_current_items()
 
     def add_item(self):
         sys.stdout.write(SHOW_CURSOR)
         title = readline_raw(f"\n{BOLD}Add:{RESET} ")
         sys.stdout.write(HIDE_CURSOR)
         if title:
-            self.storage.create_item(self.current_list["id"], title)
-            self.load_items()
-            self.cursor = len(self.items) - 1
+            new_item = self.storage.create_item(self.current_list["id"], title)
+            self.items_cache[self.current_list["id"]].append(new_item)
+            self._resort_current_items()
+            # Move cursor to new item
+            items = self.current_items
+            for i, item in enumerate(items):
+                if item["id"] == new_item["id"]:
+                    self.cursor = i
+                    break
 
     def edit_item(self):
-        item = self.items[self.cursor]
+        item = self.current_items[self.cursor]
         sys.stdout.write(SHOW_CURSOR)
         title = readline_raw(f"\n{BOLD}Edit:{RESET} ")
         sys.stdout.write(HIDE_CURSOR)
         if title:
             self.storage.update_item(self.current_list["id"], item["id"], title=title)
-            self.load_items()
+            item["title"] = title  # Update cache
 
     def delete_item(self):
-        item = self.items[self.cursor]
+        item = self.current_items[self.cursor]
         self.storage.delete_item(self.current_list["id"], item["id"])
-        self.load_items()
+        self.items_cache[self.current_list["id"]].remove(item)
+        self.sync_items_view()
         self.message = "Deleted"
 
     def new_list(self):
@@ -339,11 +354,11 @@ class TodoApp:
         name = readline_raw(f"\n{BOLD}New list:{RESET} ")
         sys.stdout.write(HIDE_CURSOR)
         if name:
-            self.storage.create_list(name)
-            self.load_lists()
+            new_list = self.storage.create_list(name)
+            self.lists.append(new_list)
+            self.items_cache[new_list["id"]] = []
             self.current_list_idx = len(self.lists) - 1
             self.cursor = 0
-            self.load_items()
 
     def rename_list(self):
         sys.stdout.write(SHOW_CURSOR)
@@ -351,19 +366,33 @@ class TodoApp:
         sys.stdout.write(HIDE_CURSOR)
         if name:
             self.storage.update_list(self.current_list["id"], name)
-            self.load_lists()
+            self.current_list["name"] = name  # Update cache
 
     def delete_list(self):
-        self.storage.delete_list(self.current_list["id"])
+        list_id = self.current_list["id"]
+        self.storage.delete_list(list_id)
+        del self.items_cache[list_id]
+        self.lists.pop(self.current_list_idx)
         self.current_list_idx = max(0, self.current_list_idx - 1)
-        self.load_lists()
+        self.sync_items_view()
         self.message = "List deleted"
 
     def clear_done(self):
         count = self.storage.clear_done(self.current_list["id"])
-        self.load_lists()
-        self.load_items()
+        # Update cache - remove done items
+        self.items_cache[self.current_list["id"]] = [
+            item for item in self.items_cache[self.current_list["id"]] if not item["done"]
+        ]
+        self.sync_items_view()
         self.message = f"Cleared {count} done item{'s' if count != 1 else ''}"
+
+    def _resort_current_items(self):
+        """Re-sort current list items (done status, then created_at)."""
+        list_id = self.current_list["id"]
+        self.items_cache[list_id] = sorted(
+            self.items_cache[list_id],
+            key=lambda x: (x.get("done", False), x.get("created_at", ""))
+        )
 
 
 def main():
