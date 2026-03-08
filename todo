@@ -1,0 +1,30 @@
+#!/bin/bash
+# One-command launcher - handles venv, deps, and config automatically
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENV_DIR="$SCRIPT_DIR/.venv"
+CONFIG_FILE="$SCRIPT_DIR/.env"
+
+# Prompt for connection string if not configured
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "First time setup - need your Azure Storage connection string."
+    echo "Find it in Azure Portal → Storage Account → Access keys → Connection string"
+    echo ""
+    read -p "Paste connection string: " CONN_STR
+    echo "AZURE_STORAGE_CONNECTION_STRING=$CONN_STR" > "$CONFIG_FILE"
+    echo "Saved to .env"
+    echo ""
+fi
+
+# Create venv if it doesn't exist
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Installing dependencies..."
+    python3 -m venv "$VENV_DIR"
+    "$VENV_DIR/bin/pip" install --quiet --upgrade pip
+    "$VENV_DIR/bin/pip" install --quiet -r "$SCRIPT_DIR/requirements.txt"
+    echo "Done!"
+    echo ""
+fi
+
+# Run the app
+exec "$VENV_DIR/bin/python" "$SCRIPT_DIR/todo.py" "$@"
