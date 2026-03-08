@@ -146,7 +146,7 @@ class TodoApp:
         lines.append("")
         
         # Help
-        lines.append(f"{DIM}a{RESET}dd  {DIM}e{RESET}dit  {DIM}d{RESET}elete  {DIM}n{RESET}otes  {DIM}space{RESET}=toggle  {DIM}N{RESET}ew list  {DIM}R{RESET}ename  {DIM}D{RESET}elete list  {DIM}q{RESET}uit")
+        lines.append(f"{DIM}a{RESET}dd  {DIM}e{RESET}dit  {DIM}d{RESET}elete  {DIM}n{RESET}otes  {DIM}space{RESET}=toggle  {DIM}x{RESET}=clear done  {DIM}N{RESET}ew list  {DIM}q{RESET}uit")
         
         # Message
         if self.message:
@@ -236,6 +236,8 @@ class TodoApp:
         elif key == 'r':
             self.load_lists()
             self.message = "Refreshed"
+        elif key == 'x' and self.current_list:
+            self.clear_done()
 
     def handle_notes_key(self, key):
         if key == '\x1b':  # Escape
@@ -356,6 +358,12 @@ class TodoApp:
         self.current_list_idx = max(0, self.current_list_idx - 1)
         self.load_lists()
         self.message = "List deleted"
+
+    def clear_done(self):
+        count = self.storage.clear_done(self.current_list["id"])
+        self.load_lists()
+        self.load_items()
+        self.message = f"Cleared {count} done item{'s' if count != 1 else ''}"
 
 
 def main():

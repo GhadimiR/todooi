@@ -126,6 +126,16 @@ class TodoStorage:
         """Delete a todo item."""
         self.items_table.delete_entity(list_id, item_id)
 
+    def clear_done(self, list_id: str) -> int:
+        """Delete all completed items in a list. Returns count deleted."""
+        items = self.items_table.query_entities(f"PartitionKey eq '{list_id}'")
+        count = 0
+        for item in items:
+            if item.get("done"):
+                self.items_table.delete_entity(list_id, item["RowKey"])
+                count += 1
+        return count
+
     def toggle_item(self, list_id: str, item_id: str) -> bool:
         """Toggle item done status. Returns new status."""
         entity = self.items_table.get_entity(list_id, item_id)
