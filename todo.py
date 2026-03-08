@@ -121,10 +121,11 @@ class TodoApp:
         # Header with list tabs
         tabs = []
         for i, lst in enumerate(self.lists):
+            count = len(self.items_cache.get(lst["id"], []))
             if i == self.current_list_idx:
-                tabs.append(f"{BOLD}{CYAN}[{lst['name']}]{RESET}")
+                tabs.append(f"{BOLD}{CYAN}[{lst['name']}]{RESET} {DIM}[{count}]{RESET}")
             else:
-                tabs.append(f"{DIM}{lst['name']}{RESET}")
+                tabs.append(f"{DIM}{lst['name']} [{count}]{RESET}")
         
         if tabs:
             lines.append("  ".join(tabs) + f"  {DIM}(←/→ switch, N new list){RESET}")
